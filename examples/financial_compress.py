@@ -2,6 +2,7 @@ import argparse
 import glob
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 # reuse the helper from infer.py to call the compression server
@@ -33,24 +34,34 @@ def load_questions(question_path: str):
     return questions
 
 
-def compress_documents(document: str, questions, level: int, output_path: str, prompt: str):
+def compress_documents(document: str, questions, level: int, output_path: str, prompt: str, server_urls):
     """Compress document for each question and write results."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'w', encoding='utf-8') as fw:
-        for q in tqdm(questions, desc='Compressing'):
-            messages = [
-                {'role': 'system', 'content': prompt},
-                {'role': 'user', 'content': q['question']},
-                {'role': 'context', 'content': document}
-            ]
-            result = compress_api_call_local(messages)
-            record = {
-                'level': level,
-                'id': q['id'],
-                'question': q['question'],
-                'compressed': result
-            }
-            fw.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+    def worker(q, url):
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": q["question"]},
+            {"role": "context", "content": document},
+        ]
+        result = compress_api_call_local(messages, url=url)
+        return {
+            "level": level,
+            "id": q["id"],
+            "question": q["question"],
+            "compressed": result,
+        }
+
+    with open(output_path, "w", encoding="utf-8") as fw:
+        futures = []
+        with ThreadPoolExecutor(max_workers=len(server_urls)) as executor:
+            for idx, q in enumerate(questions):
+                url = server_urls[idx % len(server_urls)]
+                futures.append(executor.submit(worker, q, url))
+
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="Compressing"):
+                record = fut.result()
+                fw.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 if __name__ == '__main__':
@@ -68,6 +79,9 @@ if __name__ == '__main__':
     parser.add_argument('--compress_prompt', type=str, 
                         default='You are an expert for information extraction, your task is to compress the given document to answer the user question.\n## tagging rule:\n- tag the supporting facts with \"fact\"',
                         help='prompt for compression')
+    parser.add_argument('--server_urls', type=str,
+                        default='http://0.0.0.0:8091/qwen_long_compress_server',
+                        help='Comma separated compression server URLs')
     
     args = parser.parse_args()
     
@@ -87,7 +101,9 @@ if __name__ == '__main__':
     print(f"Questions file: {args.questions}")
     print(f"Output file: {args.output}")
     
+    server_urls = [u.strip() for u in args.server_urls.split(',') if u.strip()]
+
     document = build_document(args.doc_dir)
     questions = load_questions(args.questions)
-    
-    compress_documents(document, questions, args.level, args.output, args.compress_prompt)
+
+    compress_documents(document, questions, args.level, args.output, args.compress_prompt, server_urls)

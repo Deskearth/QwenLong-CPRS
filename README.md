@@ -111,10 +111,20 @@ Here we provide how to run QwenLong-CPRS with LLM in a long-context task:
 ### Step 1: Deploy local QwenLong-CPRS API
 ```bash
 cd QwenLong-CPRS/src/api_utils
-export CUDA_VISIBLE_DEVICES=0 
+export CUDA_VISIBLE_DEVICES=0
 export MODEL_DIR="Tongyi-Zhiwen/QwenLong-CPRS-7B"
 uvicorn run_api:app --port 8091 --host '0.0.0.0' --workers 1
 ```
+
+To speed up compression with multiple GPUs you can launch several servers in
+parallel, each bound to a different GPU and port:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uvicorn run_api:app --port 8091 --host '0.0.0.0' --workers 1 &
+CUDA_VISIBLE_DEVICES=1 uvicorn run_api:app --port 8092 --host '0.0.0.0' --workers 1 &
+```
+These servers can then be used together when running
+`financial_compress.py` by passing their URLs via `--server_urls`.
 
 ### Step 2: Data Preparation
 Download Ruler-128K test data from [huggingface-hub](https://huggingface.co/datasets/Tongyi-Zhiwen/ruler-128k-subset) and put it on the `data` folder.
@@ -159,6 +169,19 @@ python infer.py \
  --cprs_prompt "$CPRS_PROMPT" \
  --use_compress True
 ```
+
+### Step 4: Parallel document compression
+To accelerate compression on large question sets, run multiple servers as shown
+above and specify them via `--server_urls` when launching `financial_compress.py`:
+
+```bash
+python financial_compress.py \
+  --server_urls "http://0.0.0.0:8091/qwen_long_compress_server,http://0.0.0.0:8092/qwen_long_compress_server" \
+  --doc_dir path/to/docs \
+  --questions path/to/questions.jsonl \
+  --output output/compressed.jsonl
+```
+
 
 
 ## 🌐 Join the Community

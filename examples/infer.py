@@ -7,41 +7,41 @@ from tqdm import tqdm
 from openai import OpenAI
 import traceback
 
-def compress_api_call_local(messages: list):
+def compress_api_call_local(messages: list, url: str | None = None):
 
     import requests
+    if url is None:
+        url = os.environ.get(
+            "COMPRESS_SERVER_URL",
+            "http://0.0.0.0:8091/qwen_long_compress_server",
+        )
     retry_cnt = 0
     while retry_cnt < 2:
         try:
             data = {
-                'header':{
-                    'request_id': "1111abca"
-                },
-                'payload':{
-                    'input':{
-                        'messages':messages
-                    },
-                    'parameters':{
-                        "min_keyword_len":1,
-                        "complete_sentence":False,
+                "header": {"request_id": "1111abca"},
+                "payload": {
+                    "input": {"messages": messages},
+                    "parameters": {
+                        "min_keyword_len": 1,
+                        "complete_sentence": False,
                         "batch_size": 1,
-                        'chunk_size': 8192
-                    }
-                }
+                        "chunk_size": 8192,
+                    },
+                },
             }
 
-            url = 'http://0.0.0.0:8091/qwen_long_compress_server'
             payload = json.dumps(data)
-            returns = requests.request("POST", url, data=payload)
-            returns = returns.json()
+            resp = requests.request("POST", url, data=payload)
+            resp = resp.json()
 
-            return returns['payload']['output']['text']
+            return resp["payload"]["output"]["text"]
 
-        except:
+        except Exception:
             retry_cnt += 1
 
             time.sleep(2)
-            print("FAILED!",returns)
+            print("FAILED!", resp)
             continue
     # raise ValueError
     return []
