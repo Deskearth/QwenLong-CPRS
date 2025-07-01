@@ -218,6 +218,48 @@ def call_model(messages):
     return outputs
 
 
+def call_model_batch(message_groups):
+    """Run model on a batch of message groups.
+
+    Args:
+        message_groups (List[List[dict]]): list of messages for each sample.
+
+    Returns:
+        List[List[int]]: model predictions for each sample.
+    """
+
+    input_ids_list = []
+    for messages in message_groups:
+        prompt = messages[0]['content']
+        query = messages[1]['content']
+        context = messages[2]['content']
+
+        query_str = ''
+        query_str += '<|im_start|>system\n' + prompt + '<|im_end|>\n'
+        query_str += '<|im_start|>user\n' + query + '<|im_end|>\n'
+        query_str += '<|im_start|>context\n'
+
+        ids = tokenizer.encode(query_str)
+        ids += tokenizer.encode(context)
+        input_ids_list.append(torch.LongTensor(ids))
+
+    max_len = max(len(ids) for ids in input_ids_list)
+    batch_size = len(input_ids_list)
+    batch_ids = torch.full((batch_size, max_len), tokenizer.pad_token_id, dtype=torch.long)
+    attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
+
+    for i, ids in enumerate(input_ids_list):
+        batch_ids[i, :len(ids)] = ids
+        attention_mask[i, :len(ids)] = 1
+
+    batch_ids = batch_ids.to(device)
+    attention_mask = attention_mask.to(device)
+
+    outputs = model(batch_ids, attention_mask).detach().cpu().numpy().tolist()
+
+    return outputs
+
+
 app = FastAPI()
 
 @app.post("/qwen_long_compress_server")
@@ -263,13 +305,10 @@ async def qwen_long_compress_server(request: Request, progress_task: BackgroundT
             for step in range(0, len(request_samples), batch_size):
                 sub_sample_group = request_samples[step: step+batch_size]
                 sub_message_group = [sample['messages'] for sample in sub_sample_group]
-                total_messages = []
                 total_offset = []
-                for msg in sub_message_group:
-                    total_messages += msg
                 for sample in sub_sample_group:
                     total_offset += sample['offset_mapping']
-                score = call_model(messages=total_messages)
+                score = call_model_batch(sub_message_group)
 
                 assert len(score) == len(sub_sample_group)
 
